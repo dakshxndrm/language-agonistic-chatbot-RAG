@@ -122,6 +122,7 @@ async def extract_article(llm: GroqLLM, article: str, chunks: list[dict]) -> lis
             {"role": "user", "content": f"Article: {article}\n\n{body}"},
         ],
         json_mode=True,
+        max_tokens=6000,  # headroom for reasoning tokens + a long triples list (see llm_groq.py)
     )
     triples = json.loads(reply)["triples"]
     out = []

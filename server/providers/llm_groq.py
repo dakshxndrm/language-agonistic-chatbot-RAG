@@ -104,10 +104,18 @@ class GroqLLM(LLMProvider):
                             yield delta
                     return
 
-    async def complete(self, messages: list[dict], *, json_mode: bool = False) -> str:
+    async def complete(self, messages: list[dict], *, json_mode: bool = False,
+                       max_tokens: int | None = None) -> str:
         payload = {"model": self._model, "messages": messages, "stream": False}
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        if max_tokens is not None:
+            # Reasoning models (gpt-oss-*) spend completion tokens on hidden
+            # reasoning first — confirmed live: without headroom, a call can
+            # exhaust its budget on reasoning and return "" for the actual
+            # answer, which then fails json_object validation with an empty
+            # failed_generation. Give it room to finish the real output too.
+            payload["max_completion_tokens"] = max_tokens
         async with httpx.AsyncClient(timeout=60.0) as client:
             for attempt in range(1, MAX_ATTEMPTS + 1):
                 resp = await client.post(GROQ_URL, json=payload, headers=self._headers())
