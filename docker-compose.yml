@@ -1,0 +1,75 @@
+# All three profiles run the same three services: the profile changes which
+# *providers* the app talks to (env vars), not which infrastructure it needs.
+# Postgres, self-hosted LiveKit and TLS are required even in `cloud` because the
+# transport must never be SaaS (C2) and session state always lives in PG (C10).
+# The onprem-only model servers (ollama / vllm) arrive in Milestone 6.
+
+x-profiles: &profiles [cloud, hybrid, onprem]
+# Graph is additive (C11) and multi-hop-only (C12), not part of the default cloud
+# dev loop — bring it up explicitly with `docker compose --profile hybrid up neo4j`.
+x-graph-profiles: &graph-profiles [hybrid, onprem]
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    profiles: *profiles
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bhasha}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bhasha}
+      POSTGRES_DB: ${POSTGRES_DB:-bhasha}
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Applied only on first init of an empty data volume.
+      - ./server/rag/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bhasha} -d ${POSTGRES_DB:-bhasha}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  livekit:
+    image: livekit/livekit-server:v1.8
+    profiles: *profiles
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-devsecret_change_me_at_least_32_chars}"
+    volumes:
+      - ./infra/livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"          # signalling (ws)
+      - "7881:7881"          # TCP fallback for WebRTC
+      - "50000-50100:50000-50100/udp"
+
+  caddy:
+    image: caddy:2
+    profiles: *profiles
+    depends_on: [livekit]
+    # `tls internal` mints a self-signed cert — browsers need getUserMedia over
+    # a secure origin, and localhost alone is not enough once you test on a LAN IP.
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    ports: ["8443:8443"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  neo4j:
+    image: neo4j:5-community
+    profiles: *graph-profiles
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-bhasha_graph_pw}"
+    ports:
+      - "7687:7687"          # bolt (server code talks to this)
+      - "7474:7474"          # browser UI, for eyeballing the graph while debugging
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
+  caddydata:
+  neo4jdata:
