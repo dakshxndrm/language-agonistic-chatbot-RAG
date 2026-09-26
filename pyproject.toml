@@ -39,4 +39,5 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-q"
+addopts = "-q -m 'not live'"
+markers = ["live: hits a real network API (Groq/Sarvam/Cohere/Neo4j) — run with `pytest -m live`"]
