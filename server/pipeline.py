@@ -1,24 +1,41 @@
-"""Pipecat pipeline assembly (M3, turn-based): LiveKit transport -> Silero
-VAD -> our ASR router -> RAG+contract "brain" -> our TTS -> LiveKit output.
+"""Pipecat pipeline assembly: LiveKit transport -> Silero VAD -> our ASR
+router -> RAG+contract "brain" -> our TTS -> LiveKit output.
 
-Turn-based, not streaming: the brain buffers the full LLM reply and runs
-lang/contract.py's validate/repair loop before speaking, because repair needs
-the complete text to check the script ratio. M4 (streaming + barge-in) is
-where a sentence-chunked variant of this replaces the buffered brain.
+M4 barge-in: BhashaBrain owns each turn as an explicit asyncio.Task bound to
+a barge_in.BargeInController, and replies are split into sentences (so a
+partial answer is possible at all). On VADUserStartedSpeakingFrame while a
+turn is in flight, it (1) cancels that task via the controller — stopping
+generation and any not-yet-pushed sentences dead, and (2) calls
+broadcast_interruption(), Pipecat's own documented mechanism (confirmed in
+frame_processor.py: FrameProcessor._start_interruption() unconditionally
+cancels+recreates every processor's in-flight task on any InterruptionFrame,
+in this installed version — NOT gated by a "allow_interruptions" pipeline
+flag, which does not exist on PipelineParams in Pipecat 1.11.0; an earlier
+version of this file passed that kwarg and it was silently ignored) — this
+is what actually flushes BhashaTTS's in-flight run_tts task.
+
+The "spoken_text" rewind is a real but coarse approximation: a sentence
+counts as "spoken" once pushed downstream to TTS, not from a true
+audio-playback-position ack (our TTS providers don't expose one — Sarvam's
+REST API returns a whole utterance in one shot). Documented, not hidden.
 
 NOT run end-to-end: this needs a live LiveKit room and real audio in/out to
 verify, which this environment has no way to drive (§2a — no GPU, no browser
-mic here). Every class below wraps a provider or Pipecat base class that WAS
-verified live (see server/providers/*.py's own docstrings); this file is the
-wiring between them, reviewed carefully against Pipecat 1.11.0's actual
-installed API, not run.
+mic here). Every provider this wraps WAS verified live (see
+server/providers/*.py's own docstrings); this file is the wiring between
+them, reviewed carefully against Pipecat 1.11.0's actual installed API
+(including the two corrections above, both found by reading its source, not
+guessed), but not run.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -28,6 +45,7 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     TTSAudioRawFrame,
     TTSSpeakFrame,
+    VADUserStartedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -38,6 +56,7 @@ from pipecat.services.stt_service import SegmentedSTTService
 from pipecat.services.tts_service import TTSService
 from pipecat.transports.livekit.transport import LiveKitParams, LiveKitTransport
 
+from server.barge_in import BargeInController
 from server.config import get_settings
 from server.lang.contract import build_contract, generate_with_contract
 from server.providers._pcm import wav_bytes_to_pcm
@@ -45,6 +64,15 @@ from server.providers.asr_router import route_transcribe
 from server.providers.factory import get_llm, get_tts
 from server.rag.orchestrate import orchestrate
 from server.rag.prompt import build_context, build_messages
+
+# Heuristic sentence split (English '.'/'!'/'?', Devanagari '।') — good
+# enough to chunk TTS work; not a full multilingual sentence tokenizer.
+_SENTENCE_RE = re.compile(r"(?<=[.!?।])\s+")
+
+
+def split_sentences(text: str) -> list[str]:
+    parts = [s.strip() for s in _SENTENCE_RE.split(text) if s.strip()]
+    return parts or ([text] if text.strip() else [])
 
 
 class BhashaSTT(SegmentedSTTService):
@@ -69,6 +97,7 @@ class BhashaSTT(SegmentedSTTService):
         self._hint_lang = hint_lang  # previous turn's detected lang, or None for turn 1
 
 
+@dataclass
 class BhashaSpeakFrame(TTSSpeakFrame):
     """TTSSpeakFrame doesn't carry a language — the contract's target
     lang/script has to ride along so BhashaTTS knows which voice to use."""
@@ -77,18 +106,40 @@ class BhashaSpeakFrame(TTSSpeakFrame):
 
 
 class BhashaBrain(FrameProcessor):
-    """RAG + Language Fidelity Contract, buffered (turn-based — see module
-    docstring). Forwards every frame unchanged, and additionally emits a
-    BhashaSpeakFrame once a finalized transcript has been answered."""
+    """RAG + Language Fidelity Contract + barge-in (M4). Forwards every
+    frame unchanged. A finalized transcript starts a new turn as its own
+    asyncio.Task, bound to a BargeInController; VADUserStartedSpeakingFrame
+    while that task is still running triggers a real barge-in."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._controller: BargeInController | None = None
+        self._turn_task: asyncio.Task | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+
+        if (isinstance(frame, VADUserStartedSpeakingFrame)
+                and self._turn_task is not None and not self._turn_task.done()):
+            spoken = await self._controller.barge_in()  # cancels _run_turn (LLM side)
+            await self.broadcast_interruption()          # flushes TTS (Pipecat's own path)
+            await self.push_frame(
+                OutputTransportMessageFrame(
+                    message=json.dumps({"barge_in": True, "spoken_text": spoken})),
+                direction,
+            )
+            self._turn_task, self._controller = None, None
+
         await self.push_frame(frame, direction)
 
         if not isinstance(frame, TranscriptionFrame) or not frame.text.strip():
             return
 
-        question = frame.text
+        self._controller = BargeInController()
+        self._turn_task = asyncio.create_task(self._run_turn(frame.text, direction))
+        self._controller.bind_llm_task(self._turn_task)
+
+    async def _run_turn(self, question: str, direction: FrameDirection) -> None:
         contract = await build_contract(question)
         # question "type" classification (factoid/multi_hop/comparative/...)
         # doesn't exist yet at pipeline runtime — graph augmentation (C12)
@@ -100,6 +151,7 @@ class BhashaBrain(FrameProcessor):
 
         llm = get_llm()
         text, passed, _repairs = await generate_with_contract(llm, messages, contract, context)
+        self._controller.tracker.append_generated(text)
 
         # web/ renders this as the transcript/lang/script/answer/citations
         # panel — sent as a LiveKit data message, not audio, so it arrives
@@ -113,7 +165,14 @@ class BhashaBrain(FrameProcessor):
             "fidelity_passed": passed,
         })
         await self.push_frame(OutputTransportMessageFrame(message=turn_metadata), direction)
-        await self.push_frame(BhashaSpeakFrame(text=text, lang=contract.lang), direction)
+
+        spoken_so_far = 0
+        for sentence in split_sentences(text):
+            await self.push_frame(BhashaSpeakFrame(text=sentence, lang=contract.lang), direction)
+            spoken_so_far += len(sentence) + 1
+            self._controller.tracker.mark_spoken(min(spoken_so_far, len(text)))
+
+        self._turn_task, self._controller = None, None
 
 
 class BhashaTTS(TTSService):
@@ -156,7 +215,7 @@ def build_pipeline(room_name: str, livekit_token: str) -> PipelineTask:
         BhashaTTS(),
         transport.output(),
     ])
-    return PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
+    return PipelineTask(pipeline, params=PipelineParams())
 
 
 async def run_pipeline(room_name: str, livekit_token: str) -> None:
