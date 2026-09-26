@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+data/corpus.jsonl
+results/
+models/
+node_modules/
+web/dist/
+*.log
+scratch_*
+.claude/

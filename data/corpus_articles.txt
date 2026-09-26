@@ -1,0 +1,104 @@
+# Knowledge corpus: Indian History (English Wikipedia)
+# One article title per line. Lines starting with '#' are ignored.
+# Grouped by era. ~60 articles -> roughly 4,000-6,000 chunks at 512 tokens.
+
+# --- Ancient / Prehistoric ---
+Indus Valley Civilisation
+Mohenjo-daro
+Harappa
+Vedic period
+Mahajanapadas
+Magadha
+Ajatashatru
+Nanda Empire
+
+# --- Mauryan Era ---
+Maurya Empire
+Chandragupta Maurya
+Chanakya
+Ashoka
+Edicts of Ashoka
+Kalinga War
+Arthashastra
+
+# --- Classical Era ---
+Gupta Empire
+Chandragupta II
+Samudragupta
+Harsha
+Nalanda mahavihara
+Satavahana dynasty
+Kushan Empire
+Kanishka
+
+# --- Southern Kingdoms ---
+Chola dynasty
+Rajaraja I
+Rajendra Chola I
+Pallava dynasty
+Chera dynasty
+Pandya dynasty
+Vijayanagara Empire
+Krishnadevaraya
+Hoysala Empire
+
+# --- Medieval / Sultanate ---
+Delhi Sultanate
+Slave dynasty
+Alauddin Khalji
+Muhammad bin Tughluq
+Firuz Shah Tughlaq
+Battle of Tarain
+First Battle of Panipat
+
+# --- Mughal Era ---
+Mughal Empire
+Babur
+Humayun
+Akbar
+Jahangir
+Shah Jahan
+Taj Mahal
+Aurangzeb
+Battle of Haldighati
+
+# --- Maratha & Regional Powers ---
+Maratha Empire
+Shivaji
+Bajirao I
+Third Battle of Panipat
+Sikh Empire
+Ranjit Singh
+Tipu Sultan
+Anglo-Mysore Wars
+
+# --- Colonial Era ---
+Company rule in India
+Battle of Plassey
+Battle of Buxar
+Permanent Settlement
+Indian Rebellion of 1857
+British Raj
+Bengal famine of 1943
+
+# --- Freedom Movement ---
+Indian independence movement
+Indian National Congress
+Partition of Bengal (1905)
+Jallianwala Bagh massacre
+Mahatma Gandhi
+Non-cooperation movement
+Salt March
+Bhagat Singh
+Subhas Chandra Bose
+Indian National Army
+Quit India Movement
+B. R. Ambedkar
+Jawaharlal Nehru
+Sardar Vallabhbhai Patel
+
+# --- Independence & After ---
+Partition of India
+Indian Independence Act 1947
+Constitution of India
+Political integration of India

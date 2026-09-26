@@ -1,0 +1,9 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+# Keys come from the LIVEKIT_KEYS env var so no secret lands in the repo (C4).
+logging:
+  level: info

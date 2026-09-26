@@ -1,0 +1,23 @@
+{
+	auto_https disable_redirects
+}
+
+# A bare `:8443` gives Caddy no subject name to mint an internal cert for and
+# the TLS handshake dies. Name the hosts explicitly; add your LAN IP here when you
+# want to test the mic from a phone (getUserMedia needs a secure origin).
+localhost:8443, 127.0.0.1:8443 {
+	tls internal
+
+	# LiveKit signalling + its HTTP API.
+	handle /rtc* {
+		reverse_proxy livekit:7880
+	}
+	handle /twirp* {
+		reverse_proxy livekit:7880
+	}
+
+	# Everything else is the FastAPI app, which runs on the host during dev.
+	handle {
+		reverse_proxy host.docker.internal:8000
+	}
+}
