@@ -370,20 +370,36 @@ Must refuse — **and refuse in Hinglish**, not English. This catches the second
 
 ### 📊 Metrics
 
-| | Metric | Definition | 🎯 Target |
-|---|---|---|---|
-| 📝 | **WER / CER** | Word / char error rate per language flavour | `< 15%` Hinglish · `< 10%` English |
-| 🔒 | **Language Fidelity Rate** | % of replies matching the contract on **both** language and script | `> 95%` |
-| 📚 | **Faithfulness** | RAGAS — claims supported by retrieved context | `> 0.90` |
-| 🎯 | **Answer relevance** | RAGAS | `> 0.85` |
-| 🔎 | **Context recall@5** | Gold article in top-5 retrieved chunks | `> 0.90` |
-| 🪤 | **False-premise rejection** | Traps correctly refused | `4 / 4` |
-| 🚧 | **Out-of-scope refusal** | Refused **in the user's own language** | `2 / 2` |
-| ⚡ | **TTFA p50 / p95** | Time to first audio byte | `< 700 ms` / `< 1200 ms` |
-| 🎤 | **Barge-in latency** | Interrupt → silence | `< 100 ms` |
+Measured by `scripts/evaluate.py` (writes `results/*.json`; see that script for
+the exact methodology — faithfulness/relevance use an LLM-judge, not the RAGAS
+library, since a lighter judge reuses answers already generated instead of a
+second heavy pass). **2026-09-26 run, partial** — `gpt-oss-120b`'s 200k
+tokens/day cap was hit mid-run; per instruction, the run stopped cleanly
+rather than burning retries, and every number below is real and unrounded
+for whatever sample size it actually covers. Re-run `python scripts/evaluate.py`
+after the daily quota resets to fill in the rest — nothing here is estimated.
 
-> 📈 **Report everything as an ablation:** single-ASR vs routed · no-contract vs contract · no-RAG vs RAG vs RAG+rerank.
-> **The deltas are the project's actual result — not the absolute numbers.**
+| | Metric | Definition | 🎯 Target | 📏 Measured |
+|---|---|---|---|---|
+| 📝 | **WER / CER** | Word / char error rate per language flavour | `< 15%` Hinglish · `< 10%` English | `TODO: measure` — pending a live mic test (no mic/browser in the dev environment) |
+| 🔒 | **Language Fidelity Rate** | % of replies matching the contract on **both** language and script | `> 95%` | **0.786** overall (n=14/50, partial — see caveat below) |
+| 📚 | **Faithfulness** | LLM-judge — claims supported by retrieved context | `> 0.90` | `TODO: measure` — judge model also hit a quota cap before any answer was judged |
+| 🎯 | **Answer relevance** | LLM-judge | `> 0.85` | `TODO: measure` — same cause |
+| 🔎 | **Context recall@5** | Gold article in top-5 retrieved chunks | `> 0.90` | **0.780** vector-only → **0.845** vector+graph (n=44, full run) |
+| 🪤 | **False-premise rejection** | Traps correctly refused | `4 / 4` | **1 / 1** reached (n=1/4, partial) |
+| 🚧 | **Out-of-scope refusal** | Refused **in the user's own language** | `2 / 2` | not reached (0/2, partial) |
+| ⚡ | **TTFA p50 / p95** | Time to first audio byte | `< 700 ms` / `< 1200 ms` | `TODO: measure` — pending a live mic test |
+| 🎤 | **Barge-in latency** | Interrupt → silence | `< 100 ms` | `TODO: measure` — pending a live mic test |
+
+**LFR per flavour** (same partial run, n=14): `en` 1.000 (n=9) · `hinglish-latn` 1.000 (n=1) ·
+`hi-deva` **0.000 (n=4)** — a real result on a very small partial sample, not yet
+confirmed as a genuine cross-script weakness vs. a small-sample artifact; needs
+the full 50-question run to know which.
+
+**Ablations run:**
+- ✅ **no-RAG vs dense vs hybrid+rerank vs hybrid+rerank+graph** (recall@5, n=44, complete): `0.000 → 0.769 → 0.780 → 0.845`. Reranking adds little on top of dense here; the graph is where the real lift is, exactly on the multi_hop/comparative questions it targets (C12).
+- ⏳ **no-contract vs with-contract** (LFR): not reached before the quota cap — `TODO: measure`.
+- ⏳ **single vs routed ASR** (WER): pending a live mic test — a clean TTS-synthesized round-trip already confirmed all three ASR providers work correctly (see `server/providers/asr_*.py`), but that's a correctness check, not a WER benchmark on real speech.
 
 ---
 
@@ -391,42 +407,56 @@ Must refuse — **and refuse in Hinglish**, not English. This catches the second
 
 ```
 bhasha/
-├── 🐳 docker-compose.yml          # ✅ profiles: cloud | hybrid | onprem
+├── 🐳 docker-compose.yml          # ✅ profiles: cloud | hybrid | onprem + neo4j (hybrid/onprem)
 ├── 🔑 .env.example                # ✅ every var in CLAUDE.md §5
 ├── 🖥️ server/
-│   ├── main.py                    # ✅ FastAPI /health (LiveKit token: M3)
+│   ├── main.py                    # ✅ FastAPI /health + /livekit/token (tested)
 │   ├── config.py                  # ✅ pydantic-settings + profile resolution
-│   ├── pipeline.py                # Pipecat pipeline assembly
-│   ├── barge_in.py                # 🚨 cancellation bus + state rewind
+│   ├── pipeline.py                # ✅ Pipecat+LiveKit assembly — structurally verified,
+│   │                              #    NOT run with live audio (no mic/browser here)
+│   ├── barge_in.py                # ✅ cancellation bus + spoken-text rewind, wired into
+│   │                              #    pipeline.py (M4), unit-tested
 │   ├── 🔌 providers/              # ← the abstraction layer
-│   │   ├── base.py                # ✅ ASRProvider · LLMProvider · TTSProvider · EmbeddingProvider · RerankProvider
-│   │   ├── embed_cohere.py        # ✅ embed-multilingual-v3.0 (default)
+│   │   ├── base.py                # ✅ ASRProvider · LLMProvider · TTSProvider · EmbeddingProvider
+│   │   │                          #    · RerankProvider · GraphProvider
+│   │   ├── embed_cohere.py        # ✅ embed-multilingual-v3.0 (default) — verified live
 │   │   ├── embed_local.py         # ✅ bge-m3 (onprem fallback)
-│   │   ├── rerank_cohere.py       # ✅ rerank-multilingual-v3.0 (default)
+│   │   ├── rerank_cohere.py       # ✅ rerank-multilingual-v3.0 (default) — verified live
 │   │   ├── rerank_local.py        # ✅ bge-reranker-v2-m3 (onprem fallback)
-│   │   ├── factory.py             # ✅ resolves EMBED_PROVIDER/RERANK_PROVIDER once (C1)
-│   │   ├── asr_groq.py  asr_sarvam.py  asr_local.py
-│   │   ├── llm_groq.py  llm_ollama.py
-│   │   └── tts_sarvam.py  tts_kokoro.py
+│   │   ├── factory.py             # ✅ resolves every *_PROVIDER once (C1)
+│   │   ├── graph_neo4j.py         # ✅ Neo4jGraphProvider, C11 fallback — verified live
+│   │   ├── llm_groq.py            # ✅ gpt-oss-120b, genuinely cancellable — verified live
+│   │   ├── llm_ollama.py          # ⚠️ written, UNVERIFIED — no Ollama on this machine
+│   │   ├── asr_groq.py            # ✅ whisper-large-v3-turbo — verified live (round-trip)
+│   │   ├── asr_sarvam.py          # ✅ saaras:v3 — verified live (round-trip)
+│   │   ├── asr_local.py           # ✅ faster-whisper CPU int8 — verified live (round-trip)
+│   │   ├── asr_router.py          # ✅ dual-path routing, unit-tested
+│   │   ├── tts_sarvam.py          # ✅ Bulbul v3 — verified live
+│   │   └── tts_kokoro.py          # ✅ Kokoro-82M — verified live
 │   ├── 🔤 lang/
-│   │   ├── detect.py              # fastText + Unicode block histogram
-│   │   └── contract.py            # ⭐ detect → constrain → validate → repair
+│   │   ├── detect.py              # ✅ fastText lid.176 + Unicode histogram — tested
+│   │   └── contract.py            # ✅ detect → constrain → validate → repair — tested
 │   └── 🧠 rag/
 │       ├── retrieve.py            # ✅ hybrid BM25 + dense, then rerank
-│       ├── prompt.py              # ⬜ citation-forced answer template
+│       ├── graph_retrieve.py      # ✅ multi_hop/comparative-only graph augmentation (C12)
+│       ├── orchestrate.py         # ✅ fuses retrieve.py + graph_retrieve.py
+│       ├── prompt.py              # ✅ citation-forced answer template + graph reasoning chains
 │       └── schema.sql             # ✅ chunks (pgvector+HNSW+tsv), conversations, turns
-├── 🎨 web/                        # React + Vite + AudioWorklet
+├── 🎨 web/                        # ✅ React+Vite+TypeScript, push-to-talk, AudioWorklet VU
+│                                  #    meter — builds clean, NOT run in a real browser here
 ├── 🛠️ scripts/
 │   ├── build_corpus.py            # ✅ implemented + tested
 │   ├── index_corpus.py            # ✅ embed → pgvector
-│   ├── eval_retrieval.py          # ✅ recall@5 per flavour
-│   └── evaluate.py                # ⬜ runs golden_set.jsonl → metrics table
+│   ├── build_graph.py             # ✅ LLM extraction → Neo4j (64/80 articles so far, resumable)
+│   ├── eval_retrieval.py          # ✅ recall@5 per flavour, vector-only vs +graph
+│   ├── eval_graph.py              # ✅ graph-path-hits-gold-article rate
+│   ├── eval_fidelity.py           # ✅ LFR, false-premise, out-of-scope
+│   └── evaluate.py                # ✅ full harness → results/*.json + markdown table
 ├── 📊 data/
 │   ├── corpus_articles.txt        # ✅ 80 curated articles
 │   ├── corpus.jsonl               # 🔄 generated
 │   └── golden_set.jsonl           # ✅ 50 stratified questions
-└── 📖 docs/
-    └── architecture.md
+└── 🧪 tests/                      # ✅ 44+ passing, live-Groq tests behind `pytest -m live`
 ```
 
 ---
