@@ -19,7 +19,7 @@ from server.config import get_settings
 from server.providers.base import LangContract, LLMProvider
 
 DEFAULT_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "qwen3:4b"  # §3 pin
+DEFAULT_MODEL = "qwen2.5:7b-instruct"
 
 
 class OllamaLLM(LLMProvider):

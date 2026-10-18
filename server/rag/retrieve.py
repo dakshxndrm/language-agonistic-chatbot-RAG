@@ -9,11 +9,15 @@ exists to test.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+import logging
 
 from server.config import get_settings
 from server.providers.factory import get_embedder, get_reranker
 from server.rag.db import get_pool
+
+logger = logging.getLogger(__name__)
 
 RRF_K = 60   # standard damping constant; keeps rank-1 from dominating the fusion
 
@@ -84,7 +88,8 @@ async def retrieve(query: str, top_k: int | None = None, rerank_top_k: int | Non
     elif mode == "sparse":
         candidates = await _sparse(query, top_k)
     else:
-        candidates = rrf([await _dense(query, top_k), await _sparse(query, top_k)])
+        dense_cands, sparse_cands = await asyncio.gather(_dense(query, top_k), _sparse(query, top_k))
+        candidates = rrf([dense_cands, sparse_cands])
 
     if not candidates:
         return []
@@ -94,10 +99,17 @@ async def retrieve(query: str, top_k: int | None = None, rerank_top_k: int | Non
         return [Hit(c["chunk_id"], c["article"], c["section"], c["text"],
                     float(c.get("score", c.get("rank", 0.0)))) for c in picked]
 
-    scores = await get_reranker().score(query, [c["text"] for c in candidates])
-    ranked = sorted(zip(candidates, scores, strict=True), key=lambda p: p[1], reverse=True)
-    return [Hit(c["chunk_id"], c["article"], c["section"], c["text"], float(sc))
-            for c, sc in ranked[:rerank_top_k]]
+    try:
+        async with asyncio.timeout(1.2):
+            scores = await get_reranker().score(query, [c["text"] for c in candidates])
+            ranked = sorted(zip(candidates, scores, strict=True), key=lambda p: p[1], reverse=True)
+            return [Hit(c["chunk_id"], c["article"], c["section"], c["text"], float(sc))
+                    for c, sc in ranked[:rerank_top_k]]
+    except Exception as exc:
+        logger.warning("Reranking failed or timed out (%s), using RRF fallback order", exc)
+        picked = candidates[:rerank_top_k]
+        return [Hit(c["chunk_id"], c["article"], c["section"], c["text"],
+                    float(c.get("score", c.get("rank", 0.0)))) for c in picked]
 
 
 async def chunks_by_ids(chunk_ids: list[str]) -> list[Hit]:

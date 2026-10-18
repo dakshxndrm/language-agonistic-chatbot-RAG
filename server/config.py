@@ -27,7 +27,7 @@ LOCAL_EQUIVALENT = {
     "graph_provider": "neo4j_local",
 }
 
-CLOUD_KEYS = ("groq_api_key", "sarvam_api_key", "cohere_api_key")
+CLOUD_KEYS = ("groq_api_key", "sarvam_api_key", "cohere_api_key", "openai_api_key")
 
 
 class ConfigError(RuntimeError):
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     asr_en_provider: Literal["groq", "local"] = "groq"
     asr_indic_provider: Literal["sarvam", "local"] = "sarvam"
     llm_provider: Literal["groq", "ollama", "vllm"] = "groq"
-    llm_model: str = "openai/gpt-oss-120b"  # §3 pin; verified live on Groq at build time
+    llm_model: str = "openai/gpt-oss-120b"  # High-capacity open model with ultra-fast inference on Groq LPU
     ollama_base_url: str = "http://localhost:11434"
     tts_provider: Literal["sarvam", "kokoro"] = "sarvam"
     embed_provider: Literal["cohere", "local"] = "cohere"
@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     sarvam_api_key: str = ""
     cohere_api_key: str = ""
+    openai_api_key: str = ""
 
     database_url: str = "postgresql+asyncpg://bhasha:bhasha@localhost:5432/bhasha"
     livekit_url: str = "ws://localhost:7880"

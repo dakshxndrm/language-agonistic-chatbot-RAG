@@ -35,6 +35,13 @@ def test_foreign_script_ratio_full_mismatch_is_one():
     assert foreign_script_ratio("Ashoka ruled the empire", contract) == 1.0
 
 
+def test_foreign_script_ratio_ignores_latin_citation_tags():
+    contract = LangContract(lang="hi", script="Deva")
+    # Pure Hindi answer with Latin chunk citation: should have 0.0 foreign script ratio
+    text = "मौर्य साम्राज्य की स्थापना चन्द्रगुप्त मौर्य ने की थी [maurya_empire::0000] 【ashoka::0002】"
+    assert foreign_script_ratio(text, contract) == 0.0
+
+
 def test_validate_respects_configured_threshold(monkeypatch):
     contract = LangContract(lang="en", script="Latn")
     # "चाय" mixed into an otherwise-English reply: small foreign fraction.

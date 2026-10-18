@@ -8,11 +8,12 @@ correctness checks without turning every dev loop into a benchmark.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 from server.providers.base import ASRProvider, Transcript
 
-DEFAULT_MODEL_SIZE = "small"  # large-v3-turbo is the §3 pin for real (GPU) deployment
+DEFAULT_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "large-v3-turbo")
 
 
 class LocalASR(ASRProvider):
@@ -63,6 +64,7 @@ class LocalASR(ASRProvider):
             confidence=float(info.language_probability),
             is_final=True,
             latency_ms=latency_ms,
+            asr_engine_used="faster-whisper",
         )
 
     async def health(self) -> bool:

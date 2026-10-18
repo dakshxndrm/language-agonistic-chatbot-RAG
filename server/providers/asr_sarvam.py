@@ -30,6 +30,12 @@ class SarvamASR(ASRProvider):
 
     def __init__(self, api_key: str | None = None):
         self._api_key = api_key or get_settings().sarvam_api_key
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
 
     async def transcribe(self, pcm: bytes, sample_rate: int,
                          hint_lang: str | None = None) -> Transcript:
@@ -41,10 +47,10 @@ class SarvamASR(ASRProvider):
         headers = {"api-subscription-key": self._api_key}
 
         start = time.monotonic()
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(ASR_URL, files=files, data=data, headers=headers)
-            resp.raise_for_status()
-            body = resp.json()
+        client = self._get_client()
+        resp = await client.post(ASR_URL, files=files, data=data, headers=headers)
+        resp.raise_for_status()
+        body = resp.json()
         latency_ms = (time.monotonic() - start) * 1000
 
         lang = (body.get("language_code") or hint_lang or "hi").split("-")[0]
@@ -55,6 +61,7 @@ class SarvamASR(ASRProvider):
             confidence=1.0,   # Saarika's API doesn't return a per-utterance confidence
             is_final=True,
             latency_ms=latency_ms,
+            asr_engine_used=self.name,
         )
 
     async def health(self) -> bool:

@@ -126,3 +126,16 @@ def get_tts() -> TTSProvider:
 
             _tts = KokoroTTS()
     return _tts
+
+
+def reset_providers() -> None:
+    """Resets cached singleton provider instances (primarily for testing)."""
+    global _embedder, _reranker, _graph, _llm, _asr_en, _asr_indic, _tts
+    _embedder = None
+    _reranker = None
+    _graph = None
+    _llm = None
+    _asr_en = None
+    _asr_indic = None
+    _tts = None
+

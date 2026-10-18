@@ -7,6 +7,7 @@ twice.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from server.providers.base import ASRProvider, Transcript
@@ -29,10 +30,28 @@ def choose_route(hint_lang: str | None) -> str:
     return "indic" if base in INDIC_LANGS and not hint_lang.endswith("-en") else "en"
 
 
+SARVAM_TIMEOUT_SECONDS = 2.5
+
+
 async def route_transcribe(pcm: bytes, sample_rate: int,
                            hint_lang: str | None = None) -> Transcript:
     route = choose_route(hint_lang)
     provider: ASRProvider = get_asr_indic() if route == "indic" else get_asr_en()
     logger.info("asr_router: hint_lang=%r -> route=%s provider=%s",
                hint_lang, route, provider.name)
+
+    if route == "indic":
+        try:
+            async with asyncio.timeout(SARVAM_TIMEOUT_SECONDS):
+                return await provider.transcribe(pcm, sample_rate, hint_lang=hint_lang)
+        except (TimeoutError, Exception) as exc:
+            logger.warning(
+                "Indic ASR (%s) failed or timed out (>1200ms): %s. "
+                "Falling back to English/Whisper ASR",
+                provider.name,
+                exc,
+            )
+            fallback = get_asr_en()
+            return await fallback.transcribe(pcm, sample_rate, hint_lang=hint_lang)
+
     return await provider.transcribe(pcm, sample_rate, hint_lang=hint_lang)

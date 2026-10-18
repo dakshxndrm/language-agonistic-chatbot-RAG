@@ -24,7 +24,7 @@ def render_graph_paths(graph_paths: list[GraphHit]) -> str:
     if not graph_paths:
         return ""
     lines = ["Additional reasoning chains from the knowledge graph:"]
-    for hit in graph_paths:
+    for hit in graph_paths[:10]:
         chain = " ".join(step.get("entity") or f"-{step.get('rel')}->" for step in hit.path)
         lines.append(f"{chain} (sources: {', '.join(hit.source_chunk_ids)})")
     return "\n".join(lines)

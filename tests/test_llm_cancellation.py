@@ -75,7 +75,12 @@ async def test_stream_is_cancellable_mid_response():
             chunks.append(tok)
 
     task = asyncio.create_task(consume())
-    await asyncio.sleep(1.5)  # let a few tokens arrive before cutting it off
+    # Wait until streaming starts (up to 5s) before cutting it off mid-response
+    for _ in range(50):
+        if chunks:
+            break
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(0.3)  # let a few more tokens arrive
     task.cancel()
 
     try:

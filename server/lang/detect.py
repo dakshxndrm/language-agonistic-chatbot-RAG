@@ -16,7 +16,20 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_MODEL_PATH = Path("data/models/lid.176.ftz")
+
+def _find_lid_model() -> Path:
+    candidates = [
+        Path("data/models/lid.176.ftz"),
+        Path("data/lid.176.bin"),
+        Path("data/models/lid.176.bin"),
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return candidates[0]
+
+
+DEFAULT_MODEL_PATH = _find_lid_model()
 LOW_CONFIDENCE = 0.4
 
 # Common Hindi/Hinglish function words that survive romanization intact —
@@ -129,12 +142,6 @@ class LanguageDetector:
         # upgrade to a dedicated Hinglish classifier if this proves insufficient.
         if confidence < LOW_CONFIDENCE and _looks_hinglish(text):
             return Detection(lang="hi-en", script="Latn", confidence=confidence)
-
-        lang = "en" if base_lang == "en" else f"{base_lang}-en"
-        return Detection(lang=lang, script="Latn", confidence=confidence)
-
-        if script != "Latn":
-            return Detection(lang=base_lang, script=script, confidence=confidence)
 
         lang = "en" if base_lang == "en" else f"{base_lang}-en"
         return Detection(lang=lang, script="Latn", confidence=confidence)

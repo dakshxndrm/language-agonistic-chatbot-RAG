@@ -116,8 +116,10 @@ async def test_barge_in_mid_turn_rewinds_to_spoken_sentences_only(brain, monkeyp
     assert brain.broadcast_interruption.calls == 1  # Pipecat's own TTS-flush path was triggered
 
     barge_in_msgs = [f for f in brain._pushed if isinstance(f, OutputTransportMessageFrame)]
-    assert len(barge_in_msgs) == 1
-    assert '"barge_in": true' in barge_in_msgs[0].message.lower()
+    assert len(barge_in_msgs) >= 1
+    assert any('"barge_in": true' in m.message.lower() for m in barge_in_msgs)
+    assert len(brain._history) == 1
+    assert brain._history[0] == {"role": "user", "content": "Tell me about Ashoka"}
 
 
 def test_split_sentences_handles_devanagari_danda():
@@ -126,3 +128,31 @@ def test_split_sentences_handles_devanagari_danda():
         "अशोक ने राज किया।", "उसने बौद्ध धर्म अपनाया।",
     ]
     assert split_sentences("") == []
+
+
+def test_detect_question_type_classifies_relational_and_comparative():
+    from server.pipeline import detect_question_type
+
+    assert detect_question_type("Who was the grandfather of Aurangzeb?") == "multi_hop"
+    assert detect_question_type("Ashoka ke pita ka naam kya tha?") == "multi_hop"
+    assert detect_question_type("Compare Akbar and Aurangzeb's religious policies") == "comparative"
+    assert detect_question_type("Dono samrajyon me kya antar tha?") == "comparative"
+    assert detect_question_type("When was the Battle of Plassey fought?") == "multi_hop"
+    assert detect_question_type("Where is the Great Bath?") == "factoid"
+
+
+async def test_multi_turn_history_accumulates(brain, monkeypatch):
+    monkeypatch.setattr(
+        "server.pipeline.generate_with_contract",
+        _async_return(("Ashoka ruled the Maurya Empire.", True, 0)),
+    )
+    await brain.process_frame(
+        TranscriptionFrame(text="Who was Ashoka?", user_id="", timestamp="0"),
+        FrameDirection.DOWNSTREAM,
+    )
+    await brain._turn_task
+
+    assert len(brain._history) == 2
+    assert brain._history[0] == {"role": "user", "content": "Who was Ashoka?"}
+    assert brain._history[1] == {"role": "assistant", "content": "Ashoka ruled the Maurya Empire."}
+

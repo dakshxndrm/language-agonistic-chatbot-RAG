@@ -15,9 +15,8 @@ import json
 import logging
 
 from server.config import get_settings
-from server.providers.base import GraphHit
-from server.providers.factory import get_graph_provider
-from server.providers.llm_groq import GroqLLM
+from server.providers.base import GraphHit, LLMProvider
+from server.providers.factory import get_graph_provider, get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +27,19 @@ script. Output strict JSON: {"entities": [str, ...]}. Return at most 3.
 """
 
 
-async def extract_entities(question: str, llm: GroqLLM | None = None) -> list[str]:
-    llm = llm or GroqLLM()
-    reply = await llm.complete(
-        [{"role": "system", "content": ENTITY_EXTRACT_PROMPT},
-         {"role": "user", "content": question}],
-        json_mode=True,
-    )
+async def extract_entities(question: str, llm: LLMProvider | None = None) -> list[str]:
+    llm = llm or get_llm()
+    if hasattr(llm, "complete"):
+        reply = await llm.complete(
+            [{"role": "system", "content": ENTITY_EXTRACT_PROMPT},
+             {"role": "user", "content": question}],
+            json_mode=True,
+        )
+    else:
+        reply = "".join([c async for c in llm.stream([
+            {"role": "system", "content": ENTITY_EXTRACT_PROMPT},
+            {"role": "user", "content": question}
+        ], None, [])])
     try:
         entities = json.loads(reply).get("entities", [])
     except json.JSONDecodeError:
@@ -71,4 +76,6 @@ async def graph_retrieve(question: str, question_type: str) -> list[GraphHit]:
             if key not in seen:
                 seen.add(key)
                 hits.append(hit)
-    return hits
+    hits.sort(key=lambda h: getattr(h, "confidence", 1.0) or 1.0, reverse=True)
+    return hits[:10]
+

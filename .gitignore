@@ -1,4 +1,4 @@
-.env
+.env*
 __pycache__/
 *.pyc
 .venv/
@@ -12,3 +12,9 @@ web/dist/
 *.log
 scratch_*
 .claude/
+.agents/
+.gemini/
+.vscode/
+.idea/
+*.key
+*.pem

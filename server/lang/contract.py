@@ -10,10 +10,15 @@ from __future__ import annotations
 
 from server.config import get_settings
 from server.lang.detect import get_detector, script_histogram
-from server.providers.base import LangContract
-from server.providers.llm_groq import GroqLLM
+from server.providers.base import LangContract, LLMProvider
+
+import re
+
+from collections.abc import Awaitable, Callable
 
 MAX_REPAIR_ATTEMPTS = 2
+_CITATION_RE = re.compile(r"\[[a-zA-Z0-9_:\.\s-]+\]|【[a-zA-Z0-9_:\.\s-]+】")
+_SPLIT_RE = re.compile(r"(?<=[.!?।॥])\s+|\n+")
 
 
 async def build_contract(user_text: str, register: str = "neutral") -> LangContract:
@@ -24,8 +29,13 @@ async def build_contract(user_text: str, register: str = "neutral") -> LangContr
 
 def foreign_script_ratio(text: str, contract: LangContract) -> float:
     """What fraction of the reply's lettered characters are NOT in the
-    contract's required script — validate()'s core check."""
-    hist = script_histogram(text)
+    contract's required script — validate()'s core check.
+    
+    Citations (e.g. [ashoka::0001] or 【maurya_empire::0000】) are stripped first
+    so their Latin chunk IDs do not falsely penalize Hindi/Devanagari answers.
+    """
+    clean_text = _CITATION_RE.sub("", text)
+    hist = script_histogram(clean_text)
     total = sum(hist.values())
     if total == 0:
         return 0.0
@@ -37,7 +47,7 @@ def validate(text: str, contract: LangContract) -> bool:
     return foreign_script_ratio(text, contract) <= get_settings().fidelity_script_threshold
 
 
-async def _repair_once(text: str, contract: LangContract, llm: GroqLLM,
+async def _repair_once(text: str, contract: LangContract, llm: LLMProvider,
                        messages: list[dict], context: list[dict]) -> str:
     correction = {
         "role": "user",
@@ -54,16 +64,36 @@ async def _repair_once(text: str, contract: LangContract, llm: GroqLLM,
     return "".join(chunks)
 
 
-async def generate_with_contract(llm: GroqLLM, messages: list[dict], contract: LangContract,
-                                 context: list[dict]) -> tuple[str, bool, int]:
-    """Streams a first reply, then repairs (bounded, never an unbounded loop —
-    C6) until it passes validate() or the attempt budget runs out.
+async def generate_with_contract(
+    llm: LLMProvider,
+    messages: list[dict],
+    contract: LangContract,
+    context: list[dict],
+    on_sentence: Callable[[str], Awaitable[None]] | None = None,
+) -> tuple[str, bool, int]:
+    """Streams a first reply (yielding sentences via on_sentence if provided),
+    then repairs (bounded, never an unbounded loop — C6) until it passes
+    validate() or the attempt budget runs out.
 
     Returns (final_text, passed_validation, repair_attempts_used).
     """
     chunks = []
+    buffer = ""
     async for tok in llm.stream(messages, contract, context):
         chunks.append(tok)
+        if on_sentence is not None:
+            buffer += tok
+            match = _SPLIT_RE.search(buffer)
+            while match:
+                sent = buffer[:match.start()].strip()
+                buffer = buffer[match.end():]
+                if sent:
+                    await on_sentence(sent)
+                match = _SPLIT_RE.search(buffer)
+
+    if on_sentence is not None and buffer.strip():
+        await on_sentence(buffer.strip())
+
     text = "".join(chunks)
 
     attempts = 0

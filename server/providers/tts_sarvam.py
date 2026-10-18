@@ -37,6 +37,12 @@ class SarvamTTS(TTSProvider):
 
     def __init__(self, api_key: str | None = None):
         self._api_key = api_key or get_settings().sarvam_api_key
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
 
     async def synthesize(self, text: str, lang: str,
                          voice: str | None = None) -> AsyncIterator[bytes]:
@@ -48,14 +54,14 @@ class SarvamTTS(TTSProvider):
         if voice:
             payload["speaker"] = voice
         headers = {"api-subscription-key": self._api_key}
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(TTS_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            for b64_audio in resp.json()["audios"]:
-                # ABC contract is raw PCM (base.py) — Bulbul returns a WAV
-                # container, so unwrap it rather than leaking the format.
-                pcm, _sr, _ch = wav_bytes_to_pcm(base64.b64decode(b64_audio))
-                yield pcm
+        client = self._get_client()
+        resp = await client.post(TTS_URL, json=payload, headers=headers)
+        resp.raise_for_status()
+        for b64_audio in resp.json()["audios"]:
+            # ABC contract is raw PCM (base.py) — Bulbul returns a WAV
+            # container, so unwrap it rather than leaking the format.
+            pcm, _sr, _ch = wav_bytes_to_pcm(base64.b64decode(b64_audio))
+            yield pcm
 
     async def health(self) -> bool:
         try:

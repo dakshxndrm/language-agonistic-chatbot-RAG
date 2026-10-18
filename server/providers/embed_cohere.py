@@ -19,6 +19,10 @@ DIM = 1024
 MAX_ATTEMPTS = 5
 
 
+MAX_QUERY_CACHE = 256
+_query_cache: dict[str, list[float]] = {}
+
+
 class CohereEmbedder(EmbeddingProvider):
     name = "cohere-embed-multilingual-v3.0"
 
@@ -36,6 +40,8 @@ class CohereEmbedder(EmbeddingProvider):
     async def embed(self, texts: list[str], is_query: bool = False) -> list[list[float]]:
         if not texts:
             return []
+        if is_query and len(texts) == 1 and texts[0] in _query_cache:
+            return [_query_cache[texts[0]]]
         client = self._ensure_client()
         # The free/trial key caps at 100k tokens/min, easy to blow through on a
         # 2000+ chunk corpus. Retry with backoff rather than making every caller
@@ -48,7 +54,12 @@ class CohereEmbedder(EmbeddingProvider):
                     input_type="search_query" if is_query else "search_document",
                     embedding_types=["float"],
                 )
-                return resp.embeddings.float_
+                embeddings = resp.embeddings.float_
+                if is_query and len(texts) == 1 and embeddings:
+                    if len(_query_cache) >= MAX_QUERY_CACHE:
+                        _query_cache.pop(next(iter(_query_cache)))
+                    _query_cache[texts[0]] = embeddings[0]
+                return embeddings
             except TooManyRequestsError:
                 if attempt == MAX_ATTEMPTS:
                     raise

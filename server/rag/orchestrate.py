@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import asyncio
+
 from server.providers.base import GraphHit
 from server.rag.graph_retrieve import graph_retrieve
 from server.rag.retrieve import Hit, chunks_by_ids, retrieve
@@ -27,12 +29,14 @@ class OrchestrationResult:
 async def orchestrate(question: str, question_type: str = "factoid",
                       top_k: int | None = None, rerank_top_k: int | None = None,
                       mode: str = "hybrid") -> OrchestrationResult:
-    vector_hits = await retrieve(question, top_k=top_k, rerank_top_k=rerank_top_k, mode=mode)
-    graph_paths = await graph_retrieve(question, question_type)
+    vector_hits, graph_paths = await asyncio.gather(
+        retrieve(question, top_k=top_k, rerank_top_k=rerank_top_k, mode=mode),
+        graph_retrieve(question, question_type),
+    )
 
     seen = {h.chunk_id for h in vector_hits}
     graph_chunk_ids = [cid for gh in graph_paths for cid in gh.source_chunk_ids if cid not in seen]
-    graph_hits = await chunks_by_ids(list(dict.fromkeys(graph_chunk_ids)))  # dedupe, keep order
+    graph_hits = await chunks_by_ids(list(dict.fromkeys(graph_chunk_ids))[:5])  # dedupe, keep order, cap at 5
 
     return OrchestrationResult(
         hits=[*vector_hits, *graph_hits],

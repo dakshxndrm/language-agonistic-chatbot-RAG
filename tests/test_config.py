@@ -35,7 +35,9 @@ def test_onprem_overrides_every_cloud_provider():
     }
 
 
-@pytest.mark.parametrize("key", ["groq_api_key", "sarvam_api_key", "cohere_api_key"])
+@pytest.mark.parametrize(
+    "key", ["groq_api_key", "sarvam_api_key", "cohere_api_key", "openai_api_key"]
+)
 def test_onprem_fails_loudly_on_any_cloud_key(key):
     with pytest.raises(ConfigError, match=key.upper()):
         make(bhasha_profile="onprem", **{key: "sk-not-a-real-key"})

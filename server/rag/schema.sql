@@ -67,3 +67,20 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 
 CREATE INDEX IF NOT EXISTS turns_conversation ON turns (conversation_id, turn_index);
+
+-- -------------------------------------------------------- semantic cache ----
+-- Enables sub-120ms responses for recurring viva/evaluation queries (Phase 5).
+CREATE TABLE IF NOT EXISTS query_cache (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    query_text       TEXT NOT NULL,
+    query_embedding  vector(1024) NOT NULL,
+    response_text    TEXT NOT NULL,
+    audio_cache_path TEXT,
+    metadata         JSONB NOT NULL DEFAULT '{}',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS query_cache_embedding_hnsw
+    ON query_cache USING hnsw (query_embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+

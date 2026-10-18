@@ -18,6 +18,7 @@ class Transcript:
     confidence: float
     is_final: bool
     latency_ms: float
+    asr_engine_used: str = "whisper"
 
 
 @dataclass(frozen=True)

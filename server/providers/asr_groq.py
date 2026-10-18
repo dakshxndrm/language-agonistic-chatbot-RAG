@@ -11,6 +11,7 @@ import time
 import httpx
 
 from server.config import get_settings
+from server.lang.detect import majority_script
 from server.providers._pcm import pcm_to_wav_bytes
 from server.providers.base import ASRProvider, Transcript
 
@@ -23,6 +24,12 @@ class GroqASR(ASRProvider):
 
     def __init__(self, api_key: str | None = None):
         self._api_key = api_key or get_settings().groq_api_key
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
 
     async def transcribe(self, pcm: bytes, sample_rate: int,
                          hint_lang: str | None = None) -> Transcript:
@@ -34,19 +41,21 @@ class GroqASR(ASRProvider):
         headers = {"Authorization": f"Bearer {self._api_key}"}
 
         start = time.monotonic()
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(TRANSCRIBE_URL, files=files, data=data, headers=headers)
-            resp.raise_for_status()
-            body = resp.json()
+        client = self._get_client()
+        resp = await client.post(TRANSCRIBE_URL, files=files, data=data, headers=headers)
+        resp.raise_for_status()
+        body = resp.json()
         latency_ms = (time.monotonic() - start) * 1000
 
+        text = body.get("text", "").strip()
         return Transcript(
-            text=body.get("text", "").strip(),
+            text=text,
             lang=hint_lang.split("-")[0] if hint_lang else "en",
-            script="Latn",
+            script=majority_script(text) if text else "Latn",
             confidence=1.0,   # whisper's verbose_json gives per-segment logprobs, not used here
             is_final=True,
             latency_ms=latency_ms,
+            asr_engine_used=self.name,
         )
 
     async def health(self) -> bool:
